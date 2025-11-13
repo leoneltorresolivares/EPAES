@@ -11,18 +11,13 @@ setwd(ruta)
 
 library(ggplot2)
 library(dplyr)
+library(tidyr)
 library(scales)
 library(MASS)
 library(gridExtra) #Grilla para varios gráficos en uno
 library(Metrics) # Metricas
 library(openxlsx)
 library(readxl)
-
-
-set.seed(1234)
-
-
-df = tibble(read_excel("epaes_v2.xlsx"))
 
 
 # Arreglar la caga de docencia -------
@@ -166,6 +161,16 @@ df = rbind(df, df_2024)
 write.xlsx(df, "epaes_v2.xlsx")
 
 
+
+# Trabajar aca ------
+
+
+set.seed(1234)
+
+
+df = tibble(read_excel("epaes_v2.xlsx"))
+
+
 # Mini EDA --------------
 
 str(df)
@@ -181,12 +186,6 @@ sum(is.na(df))
 
 
 sort(colSums(is.na(df)), decreasing = TRUE)
-
-
-df2 = df %>% filter(AÑO == 2024)
-
-
-sum(is.na(df2))
 
 
 na_counts <- colSums(is.na(df))
@@ -229,13 +228,13 @@ df_sin_na = na.omit(df)
 
 # EDA
 
-# join con las bases de deserción (prioridad)
+# join con las bases de deserción (prioridad) redy
 
 # join con la base ENCE (aqui tenemos el rendimiento) opcional
 
-# dos data set porque en join ence deserción hay muy pocos
+# dos data set porque en join ence deserción hay muy pocos opcional
 
-# caracterizar (estandar, buscar indicador para variables categoricas) 
+# caracterizar (estandar, buscar indicador para variables categoricas) aqui vamos
 
 # cluster para los grupos (h0: se agruparan los abandonos y se separan de los que siguen)
 
@@ -251,9 +250,6 @@ sort(unique(df$Carrera)) # Careeras doble sede diferenciadas en el nombre
 
 
 sum(is.na(df$Carrera)) # Podemos hacer imputacion por carrera
-
-
-sum(is.na(df$`Tengo claro lo que quiero hacer cuando termine mis estudios.`)) # Muchos NA
 
 
 get_mode = function(x){
@@ -325,14 +321,17 @@ df_imputado = df %>%
 
 
 # Antes
-table(df$`Tengo claro lo que quiero hacer cuando termine mis estudios.`, useNA = "ifany")
+table(df$`A pesar de mis esfuerzos, mis resultados académicos no mejoran.`, useNA = "ifany")
 
-prop.table(table(df$`Tengo claro lo que quiero hacer cuando termine mis estudios.`))
+prop.table(table(df$`A pesar de mis esfuerzos, mis resultados académicos no mejoran.`))
 
 # Después
-table(df_imputado$`Tengo claro lo que quiero hacer cuando termine mis estudios.`)
+table(df_imputado$`A pesar de mis esfuerzos, mis resultados académicos no mejoran.`)
 
-prop.table(table(df_imputado$`Tengo claro lo que quiero hacer cuando termine mis estudios.`))
+prop.table(table(df_imputado$`A pesar de mis esfuerzos, mis resultados académicos no mejoran.`))
+
+
+sum(is.na(df_imputado)) # En convenio hay que tener más ojo por las imputaciones
 
 
 # Dimensiones ---------------
@@ -381,31 +380,135 @@ df_imputado2 = df_imputado2 %>% mutate(
 )
 
 
-#df_imputado2 = df_imputado2 %>% mutate(`Promedio anticipación analítica` = ceiling(`Promedio anticipación analítica`))
+# Join con deserción ------------
 
 
-table(df$`Rango anticipación analítica`)
+sap = tibble(read_excel("ABANDONO-RENUNCIA SAP.XLSX", 
+                        sheet = "Sheet1"))
+
+names(sap)[1] = "RUT"
 
 
-table(df_imputado2$`Rango anticipación analítica`)
+names(sap)
 
 
-table(df$`Rango Autodeterminación personal`)
+sap = sap[,names(sap) %in% c("RUT", "Texto Indicador", "Fecha modificación", "Año académico", "Texto Plan Estudio", "Texto Unidad Organizativa")]
 
 
-table(df_imputado2$`Rango Autodeterminación personal`)
+simbad = tibble(read_excel("ABANDONO-RENUNCIA Simbad.xlsx", 
+                           sheet = "Hoja1"))
 
 
-sort(prop.table(table(df$`Promedio anticipación analítica`)))*100
+names(simbad)[1] = "RUT"
 
 
-sort(prop.table(table(df_imputado2$`Promedio anticipación analítica`)))*100
+names(simbad)
 
 
-mean(df$`Promedio anticipación analítica`, na.rm = T)
+simbad = simbad[,names(simbad) %in% c("RUT", "NOM_CARRERA", "P_AL_AGNO_IC", "E_PL_TEXTO", "SEME_INI", "SEME_FIN")]
 
 
-mean(df_imputado2$`Promedio anticipación analítica`)
+cruce_sap = merge(df_imputado, sap, by = "RUT")
+
+
+cruce_sap = cruce_sap %>% filter(`Año académico` > 2022) # matar registros de gente que entro antes de rendir la epaes
+
+
+# Identificar RUT duplicados en el join
+duplicados <- cruce_sap %>%
+  group_by(RUT) %>%
+  filter(n() > 1) %>%
+  arrange(RUT)
+
+
+
+
+cruce_2023 <- cruce_sap %>% filter(AÑO == 2023)
+cruce_2024 <- cruce_sap %>% filter(AÑO == 2024)
+cruce_2025 <- cruce_sap %>% filter(AÑO == 2025)
+
+
+cruce_simbad = merge(df_imputado, simbad, by = "RUT")
+
+# Visualizaciones -------------
+
+rangos = cruce_sap[, names(cruce_sap) %in% c("RUT", "FACULTAD", "Carrera", "Texto Indicador", "Rango anticipación analítica",
+                                             "Rango Autodeterminación personal", "Rango autoeficacia académica",
+                                             "Rango comunicación efectiva", "Rango de control y/o modulación emocional",
+                                             "Rango prospectiva académica", "Rango Sociabilidad", "AÑO",
+                                             "Promedio anticipación analítica", "Promedio Autodeterminación Personal",
+                                             "Promedio Autoeficacia académica", "Promedio Comunicación efectiva",
+                                             "Promedio Control y/o modulación emocional", "Promedio prospectiva académica",
+                                             "Promedio Sociabilidad")]
+
+# Tomar columnas
+df_long <- rangos %>%
+  pivot_longer(
+    cols = contains("Rango"),
+    names_to = "pregunta",
+    values_to = "nivel"
+  )
+
+
+df_long = df_long[,names(df_long) %in% c("RUT", "Carrera", "AÑO", "FACULTAD", "Texto Indicador", "pregunta", "nivel")]
+
+
+unique(df_long$nivel)
+
+
+df_long$nivel[df_long$nivel == "Alto"] = "RANGO ALTO"
+df_long$nivel[df_long$nivel == "Medio"] = "RANGO MEDIO"
+df_long$nivel[df_long$nivel == "Bajo"] = "RANGO BAJO"
+
+
+df_long2 <- rangos %>%
+  pivot_longer(
+    cols = contains("Promedio"),
+    names_to = "pregunta",
+    values_to = "nivel"
+  )
+
+
+names(df_long2)[13:14] = c("pregunta_prom", "nivel_prom")
+
+
+df_long2 = df_long2[,names(df_long2) %in% c("pregunta_prom", "nivel_prom")]
+
+
+df_long = cbind(df_long, df_long2)
+
+
+df_long$nivel_prom = round(df_long$nivel_prom, 2)
+
+
+write.csv(df_long, "cruces.csv", dec = ",")
+
+
+# Quedo feo
+# Facultad
+ggplot(df_long, aes(x = FACULTAD, fill = nivel)) +
+  geom_bar(position = "fill") + # "fill" hace proporciones 0–1
+  facet_wrap(~ pregunta) + # un gráfico por cada pregunta
+  labs(
+    title = "Distribución de niveles por Facultad",
+    y = "Proporción",
+    x = ""
+  ) +
+  theme_minimal()
+
+
+# Carrera
+ggplot(df_long, aes(x = Carrera, fill = Nivel)) +
+  geom_bar(position = "fill") +
+  facet_wrap(~ Pregunta) +
+  coord_flip() + # útil si hay muchas carreras
+  theme_minimal()
+
+# Abandono o renuncia
+ggplot(df_long, aes(x = `Texto Indicador`, fill = nivel)) +
+  geom_bar(position = "fill") +
+  facet_wrap(~ pregunta) +
+  theme_minimal()
 
 
 
