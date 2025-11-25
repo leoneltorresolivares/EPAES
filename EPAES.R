@@ -18,6 +18,7 @@ library(gridExtra) #Grilla para varios gráficos en uno
 library(Metrics) # Metricas
 library(openxlsx)
 library(readxl)
+library(readr)
 
 
 # Arreglar la caga de docencia -------
@@ -234,6 +235,16 @@ df_sin_na = na.omit(df)
 
 # dos data set porque en join ence deserción hay muy pocos opcional
 
+# Join con notas
+
+# test de hipotesis para quitar la wea de notas (promedio de los que desertaron mayor a los que se quedaron)
+
+# correlaciones notas, facultad, carrera
+
+# tasa de deserción por facultad
+
+# test no paramterica para diferencia entre facultades
+
 # caracterizar (estandar, buscar indicador para variables categoricas) aqui vamos
 
 # cluster para los grupos (h0: se agruparan los abandonos y se separan de los que siguen)
@@ -414,6 +425,9 @@ cruce_sap = merge(df_imputado, sap, by = "RUT")
 cruce_sap = cruce_sap %>% filter(`Año académico` > 2022) # matar registros de gente que entro antes de rendir la epaes
 
 
+write.csv(cruce_sap, "cruce_sap.csv")
+
+
 # Identificar RUT duplicados en el join
 duplicados <- cruce_sap %>%
   group_by(RUT) %>%
@@ -509,6 +523,409 @@ ggplot(df_long, aes(x = `Texto Indicador`, fill = nivel)) +
   geom_bar(position = "fill") +
   facet_wrap(~ pregunta) +
   theme_minimal()
+
+
+
+
+
+
+
+# Join notas --------
+
+
+epaes_desercion = tibble(read_csv("cruce_sap.csv"))
+epaes_desercion = epaes_desercion[,-1]
+names(epaes_desercion)
+
+
+epaes = tibble(read_excel("epaes_v2.xlsx"))
+names(epaes)
+
+
+epaes$estado = ifelse(epaes$RUT %in% epaes_desercion$RUT, "Abandono", "Sigue")
+sum(is.na(epaes$estado))
+table(epaes$estado) # todo ok
+
+
+notas = tibble(read_excel("Notas_parte_1.xlsx"))
+names(notas)
+sort(unique(notas$AGRTEXTTXT))
+
+
+# Aqui vamos a tener un temita jajaja, son to much, veamos como reducir
+notas_a_considerar = c("Calificación Final", "Nota final", "Nota única (100%)", "Nota final,ACTA RECTIFICATORIA")
+
+
+notas_filtradas = notas %>% filter(AGRTEXTTXT %in% notas_a_considerar)
+notas_filtradas = notas_filtradas %>% filter(PERYR > 2022) # EPAES es desde el 2023
+length(unique(notas_filtradas$STUDENT12)) # 3330 estudiantes, como shusha no van a cruzar 710
+names(notas_filtradas)
+
+
+columnas_a_usar = c("PERYR", "PADRE_SUBNOTA", "AGRTEXTTXT", "GRADESYM", "RUT", "CARRERA")
+
+
+notas_filtradas = notas_filtradas[,columnas_a_usar]
+names(notas_filtradas)
+
+
+# Cruce con las notas
+
+notas_filtradas$estado = epaes$estado[match(notas_filtradas$RUT, epaes$RUT)]
+notas_filtradas$estado[is.na(notas_filtradas$estado)] = "Sin coincidencia"
+table(notas_filtradas$estado)
+
+
+notas_filtradas = subset(notas_filtradas, notas_filtradas$estado != "Sin coincidencia")
+notas_filtradas = notas_filtradas %>% filter(!is.na(GRADESYM))
+str(notas_filtradas)
+unique(notas_filtradas$GRADESYM)
+notas_no_utiles = c("CO", "P", "AS")
+notas_filtradas = notas_filtradas %>% filter(!(GRADESYM %in% notas_no_utiles))
+
+
+notas_filtradas$GRADESYM = as.numeric(gsub(",", ".", notas_filtradas$GRADESYM))
+sum(is.na(notas_filtradas$GRADESYM))
+
+
+# GG, buscar un test que aguante más de 5000 obs
+shapiro_sigue <- shapiro.test(notas_filtradas$GRADESYM[notas_filtradas$estado == "Sigue"])
+shapiro_abandono  <- shapiro.test(notas_filtradas$GRADESYM[notas_filtradas$estado == "Abandono"])
+
+
+
+# vectores por grupo
+notas_sigue <- notas_filtradas$GRADESYM[notas_filtradas$estado == "Sigue"]
+notas_abandono  <- notas_filtradas$GRADESYM[notas_filtradas$estado == "Abandono"]
+
+t_welch <- t.test(notas_sigue, notas_abandono,
+                  alternative = "less",   # H0: promedio de notas que sigue es mayor o igual al que abandono
+                                          # H1: promedio de notas que sigue es menor al que abandono
+                  var.equal = FALSE,      # Welch
+                  conf.level = 0.95)
+
+
+t_welch # No hay suficiente evidencia para rechazar h0, por lo tanto, no hay suficiente evidencia para decir que las notas
+# que los que siguen son menores a las que abandonaron
+
+
+# Tomar carrera, facultad, rangos, promedios, año y convenio de epaes y unirlo con notas
+
+
+sort(names(epaes))
+columnas_a_usar = c("AÑO", "Carrera", "CONVENIO", "FACULTAD", "Promedio anticipación analítica", "Promedio Autodeterminación Personal",
+                    "Promedio Autoeficacia académica", "Promedio Comunicación efectiva", "Promedio Control y/o modulación emocional",
+                    "Promedio prospectiva académica", "Promedio Sociabilidad", "Rango anticipación analítica",
+                    "Rango Autodeterminación personal", "Rango autoeficacia académica", "Rango comunicación efectiva",
+                    "Rango de control y/o modulación emocional", "Rango prospectiva académica", "Rango Sociabilidad", "RUT")
+
+
+epaes_2 = epaes[,columnas_a_usar]
+
+
+notas_eapes = notas_filtradas %>% 
+  left_join(epaes_2, by = "RUT")
+
+
+colSums(is.na(notas_eapes)) # Todo ok
+
+
+library(ggpubr) #Grafico corr
+library(ggcorrplot) # Grafico corr con valor p
+library(plotly)
+
+# Caso ez
+df_ = notas_eapes[,c("Promedio Autodeterminación Personal","Promedio Control y/o modulación emocional", "Promedio Autoeficacia académica",
+            "Promedio prospectiva académica", "Promedio anticipación analítica", "Promedio Comunicación efectiva",
+            "Promedio Sociabilidad", "GRADESYM")]
+
+
+df_corr = cor(df_)
+
+
+plot_ly(
+  x = colnames(df_corr),
+  y = rownames(df_corr),
+  z = df_corr,
+  type = "heatmap",
+  colorscale = "RdBu"
+)
+
+
+# Colocar la correlación en el grafico
+ggcorrplot(df_corr, hc.order = TRUE, type = "lower",
+           lab = TRUE, lab_size = 3, 
+           colors = c("red", "white", "blue"),
+           title = "Matriz de Correlación",
+           ggtheme = theme_minimal())
+
+
+p_matrix <- cor_pmat(df_)
+
+
+# Colocar la significancia en el grafico
+ggcorrplot(df_corr, 
+           hc.order = TRUE, type = "lower",
+           lab = TRUE, lab_size = 3,
+           p.mat = p_matrix, sig.level = 0.05,
+           insig = "blank",
+           colors = c("red", "white", "blue"),
+           title = "Matriz de Correlación con Significancia",
+           ggtheme = theme_minimal())
+
+
+# write.csv(notas_eapes, "notas_espaes.csv")
+
+
+# Caso Shiny -------
+
+library(shiny)
+library(dplyr)
+
+df <- notas_eapes
+
+# Va correlaciones
+vars_correlacion <- c(
+  "Promedio Autodeterminación Personal",
+  "Promedio Control y/o modulación emocional",
+  "Promedio Autoeficacia académica",
+  "Promedio prospectiva académica",
+  "Promedio anticipación analítica",
+  "Promedio Comunicación efectiva",
+  "Promedio Sociabilidad",
+  "GRADESYM"
+)
+
+ui <- fluidPage(
+  
+  titlePanel("Matriz de Correlación Dinámica"),
+  
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("facultad", "Filtrar por Facultad:",
+                  choices = c("Todas", sort(unique(df$FACULTAD))),
+                  selected = "Todas"),
+      
+      selectInput("carrera", "Filtrar por Carrera:",
+                  choices = c("Todas", sort(unique(df$Carrera))),
+                  selected = "Todas"),
+      
+      checkboxGroupInput(
+        "vars", "Seleccionar variables a correlacionar:",
+        choices = vars_correlacion,
+        selected = vars_correlacion
+      )
+    ),
+    
+    mainPanel(
+      plotOutput("corrplot")
+    )
+  )
+)
+
+server <- function(input, output, session) {
+  
+  # Actualizar las carreras según la facultad seleccionada
+  observeEvent(input$facultad, {
+    
+    if (input$facultad == "Todas") {
+      
+      updateSelectInput(session, "carrera",
+                        choices = c("Todas", sort(unique(df$Carrera))),
+                        selected = "Todas")
+      
+    } else {
+      
+      carreras_filtradas <- df %>% 
+        filter(FACULTAD == input$facultad) %>% 
+        pull(Carrera) %>% 
+        unique() %>% 
+        sort()
+      
+      updateSelectInput(session, "carrera",
+                        choices = c("Todas", carreras_filtradas),
+                        selected = "Todas")
+    }
+  })
+  
+  # Render del gráfico
+  output$corrplot <- renderPlot({
+    
+    datos_filtrados <- df
+    
+    # Filtrar Facultad
+    if (input$facultad != "Todas") {
+      datos_filtrados <- datos_filtrados %>%
+        filter(FACULTAD == input$facultad)
+    }
+    
+    # Filtrar Carrera
+    if (!is.null(input$carrera) && input$carrera != "Todas") {
+      datos_filtrados <- datos_filtrados %>%
+        filter(CARRERA == input$carrera)
+    }
+    
+    # Mantener solo columnas seleccionadas
+    datos_corr <- datos_filtrados %>% select(all_of(input$vars))
+    
+    # Convertir a numérico
+    datos_corr <- as.data.frame(lapply(datos_corr, function(x) {
+      as.numeric(as.character(x))
+    }))
+    
+    # Matriz de correlación
+    corr <- cor(datos_corr, use = "pairwise.complete.obs")
+    
+    ggcorrplot(
+      corr,
+      type = "lower",
+      lab = TRUE,
+      lab_size = 3,
+      colors = c("red", "white", "blue"),
+      title = "Matriz de Correlación",
+      ggtheme = theme_minimal()
+    )
+  })
+}
+
+shinyApp(ui, server)
+
+
+# Test no parametrico para diferencia de facultades ----------
+
+
+# Clustring ----------
+
+epaes_desercion = tibble(read_csv("cruce_sap.csv"))
+epaes_desercion = epaes_desercion[,-1]
+names(epaes_desercion)
+
+
+epaes = tibble(read_excel("epaes_v2.xlsx"))
+names(epaes)
+
+
+epaes$estado = ifelse(epaes$RUT %in% epaes_desercion$RUT, "Abandono", "Sigue")
+sum(is.na(epaes$estado))
+table(epaes$estado) # todo ok
+str(epaes)
+
+
+epaes = epaes %>% 
+  dplyr::select(
+    estado,
+    FACULTAD,
+    Carrera,
+    starts_with("Promedio ")
+  )
+
+
+epaes_num = epaes %>% 
+  dplyr::select(starts_with("Promedio"))
+
+
+# Escalar variables
+epaes_scaled = scale(epaes_num)
+
+
+set.seed(19990772)
+# Con la regla del codo nos queda en 10 clusters, volver a aplicar y caraterizar por puntajes, rangos, facultad
+wss <- sapply(1:10, function(k){
+  kmeans(epaes_scaled, centers = k, nstart = 25)$tot.withinss
+})
+
+plot(1:10, wss, type = "b",
+     xlab = "Número de clusters",
+     ylab = "Within-cluster sum of squares",
+     main = "Método del Codo")
+
+
+
+# Semilla y centroides
+set.seed(19990772)
+k = 10 # 2 grupos no son jajajaj
+
+
+modelos_kmeans = kmeans(epaes_scaled, centers = k, nstart = 25)
+
+
+epaes$cluster = modelos_kmeans$cluster
+
+# Empecemos a caracterizar
+
+table(epaes$cluster, epaes$estado)
+table(epaes$cluster, epaes$FACULTAD)
+
+hist(epaes$`Promedio anticipación analítica`)
+table(epaes$`Promedio anticipación analítica`)
+
+
+#write.csv(epaes, "eapes_con_cluster.csv")
+
+
+cluster_promedios = epaes %>% 
+  group_by(cluster) %>% 
+  summarise(across(starts_with("Promedio "), mean, na.rm = TRUE))
+
+
+cluster_promedios = cluster_promedios %>% 
+  mutate(across(
+    starts_with("Promedio"),
+    ~ case_when(
+      .x <= 2.4 ~ "Bajo",
+      .x <= 3.4 ~ "Medio",
+      T ~ "Alto"
+    ),
+    .names = "{.col}_cat"
+  ))
+
+
+cluster_promedios
+
+
+tabla_facultad = epaes %>% 
+  group_by(cluster, FACULTAD) %>% 
+  summarise(n = n()) %>% 
+  mutate(pct = round(n / sum(n) * 100, 1))
+
+tabla_facultad
+
+
+tabla_facultad_wide = epaes %>% 
+  count(cluster, FACULTAD) %>% 
+  tidyr::pivot_wider(
+    names_from = FACULTAD,
+    values_from = n,
+    values_fill = 0
+  )
+
+tabla_facultad_wide
+
+
+library(reshape2)
+
+df_plot = cluster_promedios %>% 
+  melt(id.vars = "cluster")
+
+ggplot(df_plot, aes(x = variable, y = value, fill = factor(cluster))) +
+  geom_col(position = "dodge") +
+  coord_flip() +
+  labs(fill = "Cluster",
+       x = "Dimensiones",
+       y = "Promedio")
+
+
+# Clustering categorico
+
+# Clustering mixto
+
+
+
+
+
+
+
+
 
 
 
